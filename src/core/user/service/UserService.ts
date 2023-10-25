@@ -1,6 +1,8 @@
+import { json } from "express";
 import UseCase from "../../shared/UseCase";
 import User from "../model/User";
 import UserRepository from "./UserRepository";
+import * as yup from 'yup';
 
 type Input = {
     name: string
@@ -8,51 +10,118 @@ type Input = {
     password: string
 }
 
-export default class UserService implements UseCase<User | string, User[] | User | string>{
+export type Response = {
+    message?: string | yup.ValidationError,
+    data?: User | User[],
+    code: number
+}
+
+export const postValidation = yup.object({
+    body: yup.object({
+        name: yup.string().required().min(3),
+        email: yup.string().email().required(),
+        password: yup.string().min(8).required()
+      }),
+})
+
+export const putValidation = yup.object({
+    body: yup.object({
+        name: yup.string().min(3),
+        email: yup.string().email(),
+        password: yup.string().min(8)
+      }),
+})
+
+export default class UserService implements UseCase<User | string, Response>{
     constructor(readonly repository: UserRepository) { }
 
-    async get(): Promise<User[]> {
+    async get() {
         const response = await this.repository.get();
-        return response;
+        return {
+            data: response,
+            code: 200 
+        };
     }
 
-    async post(data: Input): Promise<User | string> {
-        const { name, email, password } = data;
+    async post(data: Input): Promise<Response> {
 
-        const userExists = await this.repository.getOne(email)
+        const userExists = await this.repository.getOne(data.email);
 
         if (userExists) {
-            return "User already exists";
+            return {
+                message: "User already exists",
+                code: 422
+            };
         }
 
-        const user = await this.repository.post({ name, email, password });
+        try {
+            const user = await this.repository.post(data);
 
-        return user;
+            return {
+                data: user,
+                code: 201
+            };
+        } catch (error) {
+            const yupError = error as yup.ValidationError;
+
+            return {
+                message: yupError,
+                code: 500
+            };
+        }
+
     }
 
-    async put(email: string, data: Input): Promise<User | string> {
+    async put(email: string, data: Input): Promise<Response> {
 
-        if (!this.repository.getOne(email)) return "User does not exists";
+        const {name, password} = data;
 
-        const user = await this.repository.put(email, data)
+        if (!this.repository.getOne(email)) {
+            return {
+                message: "User does not exists",
+                code: 404
+            };
+        } 
+    
+        const user = await this.repository.put(email, {name, password, email})
 
-        return user;
+        return {
+            data: user,
+            code: 200
+        };
     }
 
-    async getOne(email: string): Promise<User | string> {
+    async getOne(email: string): Promise<Response> {
         const response = await this.repository.getOne(email);
 
-        if (!response) return "User does not exists";
+        if (!response) {
+            return {
+                message: "User does not exists",
+                code: 404
+            } 
+        }
 
-        return response;
+        return {
+            data: response,
+            code: 200
+        }
     }
 
-    async delete(email:string): Promise<User | string>{
+    async delete(email: string): Promise<Response> {
         const user = await this.repository.getOne(email);
 
-        if (!user) return "not found";
+        if (!user){
+            return {
+                message: "not found",
+                code: 404
+            }
+        }
 
-        const response = await this.repository.delete(email);
-        return response
+        await this.repository.delete(email);
+
+        return {
+            message: "User deleted successfully",
+            code: 200
+        }
     }
 }
